@@ -280,6 +280,8 @@ function prepareModelForAR() {
  * Start AR session
  */
 async function startAR() {
+    console.log("AR Button clicked - starting AR experience");
+    
     if (!currentPreviewRenderer || !currentPreviewRenderer.renderer) {
         console.error("PreviewRenderer not ready.");
         return;
@@ -291,15 +293,30 @@ async function startAR() {
 
     if (navigator.xr) {
         try {
-            // DOM Overlay feature requires the UI elements to be within the specified root.
-            const session = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['hit-test', 'dom-overlay'],
+            // Check if AR is supported before trying to start it
+            const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
+            console.log("AR supported on this device:", isSupported);
+            
+            if (!isSupported) {
+                throw new Error("AR not supported on this device");
+            }
+            
+            // Use minimal required features first to increase compatibility
+            const sessionInit = {
+                requiredFeatures: ['dom-overlay'],
+                optionalFeatures: ['hit-test'], // Make hit-test optional
                 domOverlay: { root: document.getElementById('ar-container-wrapper') }
-            });
+            };
+            
+            console.log("Requesting AR session with options:", sessionInit);
+            const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
+            console.log("AR Session created successfully");
+            
+            // Now handle the session
             onSessionStartedAR(session);
         } catch (e) {
             console.error("Failed to start AR session:", e);
-            document.getElementById('info-message').textContent = "Failed to start AR. Ensure WebXR is supported and camera permissions are granted. Error: " + e.message;
+            document.getElementById('info-message').textContent = "Failed to start AR: " + e.message;
             document.getElementById('info-message').style.display = 'block';
             setTimeout(() => { document.getElementById('info-message').style.display = 'none'; }, 5000);
         }
@@ -392,47 +409,101 @@ function renderXRSession(timestamp, frame) {
         return;
     }
 
-    // Hit Testing
-    if (!hitTestSourceRequested) {
-        arSession.requestReferenceSpace('viewer').then((viewerSpace) => {
-            // Ensure viewerSpace is not null before requesting hit test source
-            if (viewerSpace) {
-                arSession.requestHitTestSource({ space: viewerSpace }).then((source) => {
-                    hitTestSource = source;
-                    console.log("Hit test source obtained.");
-                }).catch(err => {
-                     console.error("Could not get hit test source:", err);
-                     hitTestSourceRequested = false; // Allow retry
-                });
-            } else {
-                console.error("Viewer reference space is null.");
-                hitTestSourceRequested = false; // Allow retry
-            }
-        }).catch(err => {
-            console.error("Could not get viewer reference space for hit test:", err);
-            hitTestSourceRequested = false; // Allow retry
-        });
-        hitTestSourceRequested = true; // Set true once request is made
+    // Log on first few frames to help debug
+    if (frame && window.arFrameCount === undefined) {
+        window.arFrameCount = 0;
+        console.log("First AR frame received");
+    }
+    
+    if (window.arFrameCount !== undefined && window.arFrameCount < 10) {
+        window.arFrameCount++;
+        if (window.arFrameCount === 1 || window.arFrameCount === 5) {
+            console.log(`AR Frame ${window.arFrameCount}`, {
+                frame: frame,
+                timestamp: timestamp,
+                referenceSpace: referenceSpace
+            });
+        }
+    }
+    
+    // Try to get viewer pose
+    const pose = frame.getViewerPose(referenceSpace);
+    if (pose && window.viewerPoseLogged !== true) {
+        console.log("Got viewer pose:", pose);
+        window.viewerPoseLogged = true;
     }
 
-    if (hitTestSource && arReticle) {
-        const hitTestResults = frame.getHitTestResults(hitTestSource);
-        if (hitTestResults.length > 0) {
-            const hit = hitTestResults[0];
-            const hitPose = hit.getPose(referenceSpace);
+    // Hit Testing - with more robust error handling
+    if (!hitTestSourceRequested) {
+        try {
+            console.log("Requesting hit test source");
+            arSession.requestReferenceSpace('viewer')
+                .then((viewerSpace) => {
+                    // Ensure viewerSpace is not null before requesting hit test source
+                    if (viewerSpace) {
+                        console.log("Got viewer space, requesting hit test source");
+                        return arSession.requestHitTestSource({ space: viewerSpace });
+                    } else {
+                        console.error("Viewer reference space is null.");
+                        return null;
+                    }
+                })
+                .then((source) => {
+                    if (source) {
+                        hitTestSource = source;
+                        console.log("Hit test source obtained successfully");
+                    } else {
+                        console.log("Could not get hit test source");
+                    }
+                    hitTestSourceRequested = true; // Mark as requested either way
+                })
+                .catch(err => {
+                    console.error("Error setting up hit test:", err);
+                    hitTestSourceRequested = true; // Mark as requested to avoid infinite retries
+                    
+                    // Show message to user that hit testing isn't available
+                    document.getElementById('info-message').textContent = 
+                        "Surface detection not available. Tap anywhere to place.";
+                    document.getElementById('info-message').style.display = 'block';
+                    
+                    // Enable tap-to-place without hit testing
+                    window.arPlaceWithoutHitTest = true;
+                });
+        } catch (err) {
+            console.error("Exception requesting hit test:", err);
+            hitTestSourceRequested = true;
+            window.arPlaceWithoutHitTest = true;
+        }
+    }
 
-            if (hitPose) {
-                arReticle.visible = true;
-                arReticle.matrix.fromArray(hitPose.transform.matrix);
+    // Process hit test results
+    if (hitTestSource && arReticle) {
+        try {
+            const hitTestResults = frame.getHitTestResults(hitTestSource);
+            if (hitTestResults.length > 0) {
+                const hit = hitTestResults[0];
+                const hitPose = hit.getPose(referenceSpace);
+
+                if (hitPose) {
+                    arReticle.visible = true;
+                    arReticle.matrix.fromArray(hitPose.transform.matrix);
+                    
+                    // Log on first hit
+                    if (!window.firstHitLogged) {
+                        console.log("First hit test success:", hitPose);
+                        window.firstHitLogged = true;
+                    }
+                } else {
+                    arReticle.visible = false;
+                }
             } else {
                 arReticle.visible = false;
             }
-        } else {
+        } catch (err) {
+            console.error("Error during hit test processing:", err);
             arReticle.visible = false;
         }
     }
-    // The renderer's own loop will render scene and camera
-    // No explicit call to currentPreviewRenderer.renderer.render() here if using setAnimationLoop
 }
 
 /**
