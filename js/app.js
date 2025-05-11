@@ -1,25 +1,20 @@
-import * as THREE from 'three';
-import FontManager from './fontManager.js';
-import SvgProcessor from './svgProcessor.js';
-import ModelGenerator from './modelGenerator.js';
-import PreviewRenderer from './previewRenderer.js';
-import ExportManager from './exportManager.js';
-
-// AR variables
-let arSession = null;
-let arController = null;
-let arReticle = null; // This will be our 3D reticle object
-let hitTestSource = null;
-let hitTestSourceRequested = false;
-let modelToPlaceAR = null; // This will hold the sign model prepared for AR
-
-// Reference to previewRenderer instance, will be set in DOMContentLoaded
-let currentPreviewRenderer = null;
-
 /**
  * Main Application
  * Initializes and coordinates the components of the 3D Sign Creator
  */
+
+// Ensure THREE is imported if you're using modules consistently
+// import * as THREE from 'three'; 
+
+// These AR variables should be at the top level of your app.js
+let arSession = null;
+let arController = null;
+let arReticle = null;
+let hitTestSource = null;
+let hitTestSourceRequested = false;
+let modelToPlaceAR = null;
+let currentPreviewRenderer = null; // Will be set in DOMContentLoaded
+
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize components
     const fontManager = new FontManager();
@@ -27,9 +22,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelGenerator = new ModelGenerator();
     const previewRenderer = new PreviewRenderer('preview-container');
     const exportManager = new ExportManager(svgProcessor, modelGenerator);
-    
-    // Store previewRenderer for AR
-    currentPreviewRenderer = previewRenderer;
+
+    currentPreviewRenderer = previewRenderer; // Store for global AR functions
+    if (currentPreviewRenderer && currentPreviewRenderer.renderer) {
+        // It's generally good practice to enable XR on the renderer early.
+        // The actual session management will handle starting/stopping.
+        currentPreviewRenderer.renderer.xr.enabled = true; 
+        console.log("Three.js WebXR enabled on renderer.");
+    } else {
+        console.error("PreviewRenderer or its renderer is not initialized at DOMContentLoaded!");
+    }
     
     // Global variables to store current state
     window.currentPathData = null;
@@ -38,9 +40,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Input elements
     const textInput = document.getElementById('text-input');
-    // Create virtual outline elements since they were removed from UI
-    const outlineColor = '#000000';
-    const outlineThickness = 20;
     const letterSpacingInput = document.getElementById('letter-spacing');
     const letterSpacingValue = document.getElementById('letter-spacing-value');
     const extrusionDepthInput = document.getElementById('extrusion-depth');
@@ -48,77 +47,72 @@ document.addEventListener('DOMContentLoaded', () => {
     const dynamicDepthInput = document.getElementById('dynamic-depth');
     const bevelEnabledInput = document.getElementById('bevel-enabled');
     const frontColorInput = document.getElementById('front-color');
-    const sideColorInput = document.getElementById('side-color');
+    const sideColorInput = document.getElementById('side-color'); // Still exists, though hidden
     const updatePreviewButton = document.getElementById('update-preview');
     const svgUploadInput = document.getElementById('svg-upload');
-    
-    // Set default colors
-    frontColorInput.value = "#ffffff"; // White for front
-    sideColorInput.value = "#000000"; // Black for sides
-    
-    // Apply the color setting to the previewRenderer
-    previewRenderer.frontColor = frontColorInput.value;
-    
-    // Hide the side color input group since we're making all sides black
-    const sideColorGroup = sideColorInput.closest('.input-group');
-    if (sideColorGroup) {
-        sideColorGroup.style.display = 'none';
-    }
-    
-    // Add a retro theme toggle
-    const themeToggle = document.createElement('button');
-    themeToggle.className = 'btn';
-    themeToggle.innerHTML = '<i class="ri-sun-line"></i> Toggle Light Mode';
-    themeToggle.style.marginTop = '20px';
-    document.querySelector('.export-options').after(themeToggle);
-    
-    themeToggle.addEventListener('click', () => {
-        document.body.classList.toggle('light-mode');
-    });
-    
-    // Get AR UI elements
+
+    // AR UI Elements
     const arContainerWrapper = document.getElementById('ar-container-wrapper');
     const arUiContainer = document.getElementById('ui-container');
     const arInfoMessage = document.getElementById('info-message');
     const viewInARButton = document.getElementById('view-in-ar-button');
     const arExitButton = document.getElementById('ar-exit-button');
     
-    // Add event listeners for AR buttons
-    viewInARButton.addEventListener('click', startAR);
-    arExitButton.addEventListener('click', endARSession);
+    // Set default colors
+    frontColorInput.value = "#ffffff"; 
     
-    // Color display elements
+    if (previewRenderer) {
+        previewRenderer.frontColor = frontColorInput.value;
+    }
+    
+    const sideColorGroup = sideColorInput.closest('.input-group');
+    if (sideColorGroup) {
+        sideColorGroup.style.display = 'none';
+    }
+    
+    const themeToggle = document.createElement('button');
+    themeToggle.className = 'btn';
+    themeToggle.innerHTML = '<i class="ri-sun-line"></i> Toggle Light Mode';
+    themeToggle.style.marginTop = '20px';
+    const exportOptionsDiv = document.querySelector('.export-options');
+    if (exportOptionsDiv) {
+        exportOptionsDiv.after(themeToggle);
+    }
+    
+    themeToggle.addEventListener('click', () => {
+        document.body.classList.toggle('light-mode');
+        // Assuming you have a default dark-mode or will add it
+        if (!document.body.classList.contains('light-mode')) {
+            document.body.classList.add('dark-mode'); 
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
+    });
+    
     const colorPickerContainers = document.querySelectorAll('.color-picker-container');
     colorPickerContainers.forEach(container => {
         const colorInput = container.querySelector('input[type="color"]');
         const colorValue = container.querySelector('.color-value');
-        
         if (colorInput && colorValue) {
-            // Initial value
             colorValue.textContent = colorInput.value;
-            
-            // Update on change
             colorInput.addEventListener('input', () => {
                 colorValue.textContent = colorInput.value;
             });
         }
     });
     
-    // File upload styling
     if (svgUploadInput) {
         const fileUploadLabel = document.querySelector('.file-upload-label');
-        
         svgUploadInput.addEventListener('change', function() {
             if (this.files.length > 0) {
                 const fileName = this.files[0].name;
-                fileUploadLabel.innerHTML = `<i class="ri-file-line"></i><span>${fileName}</span>`;
+                if(fileUploadLabel) fileUploadLabel.innerHTML = `<i class="ri-file-line"></i><span>${fileName}</span>`;
             } else {
-                fileUploadLabel.innerHTML = `<i class="ri-upload-cloud-line"></i><span>Choose a file or drag it here</span>`;
+                if(fileUploadLabel) fileUploadLabel.innerHTML = `<i class="ri-upload-cloud-line"></i><span>Choose a file or drag it here</span>`;
             }
         });
     }
     
-    // Update values display for range inputs
     extrusionDepthInput.addEventListener('input', () => {
         extrusionDepthValue.textContent = `${extrusionDepthInput.value}mm`;
     });
@@ -127,97 +121,72 @@ document.addEventListener('DOMContentLoaded', () => {
         letterSpacingValue.textContent = `${letterSpacingInput.value}px`;
     });
     
-    // Event listener for font changes
     document.addEventListener('fontChanged', () => {
-        // Switch to text mode when font is changed
         window.designMode = 'text';
         updatePreview();
     });
     
-    // Event listener for SVG uploads
     document.addEventListener('svgUploaded', (event) => {
-        // Switch to SVG mode when an SVG is uploaded
         window.designMode = 'svg';
         window.currentPathData = event.detail;
         updatePreview();
     });
     
-    // Event listener for color changes (real-time update without regenerating geometry)
     frontColorInput.addEventListener('input', updateModelColors);
-    
-    // Event listener for the update preview button
     updatePreviewButton.addEventListener('click', updatePreview);
     
-    // Event listeners for export buttons
     document.getElementById('download-svg').addEventListener('click', () => {
-        exportManager.exportSVG();
+        exportManager.handleSvgExport(); 
     });
     
     document.getElementById('download-stl').addEventListener('click', () => {
-        exportManager.exportSTL(previewRenderer.getCurrentModel());
+        exportManager.handleStlExport();
     });
-    
-    /**
-     * Update the preview based on current settings
-     */
+
+    if (viewInARButton) viewInARButton.addEventListener('click', startAR);
+    if (arExitButton) arExitButton.addEventListener('click', endARSession);
+
     function updatePreview() {
-        // Show loading indicator
         document.getElementById('loading-indicator').classList.remove('hidden');
-        
         try {
-            // Generate path data based on design mode
             if (window.designMode === 'text') {
                 const text = textInput.value || 'Hello';
                 const letterSpacing = parseFloat(letterSpacingInput.value);
                 window.currentPathData = fontManager.generateTextPath(text, 72, letterSpacing);
             }
-            
-            // Check if we have valid path data
             if (!window.currentPathData || !window.currentPathData.paths || window.currentPathData.paths.length === 0) {
-                throw new Error('No valid path data');
+                throw new Error('No valid path data to generate model.');
             }
-            
-            // Get 3D settings
             const settings = get3DSettings();
-            
-            // Generate 3D model
             window.currentModel = modelGenerator.generateModelFromPaths(window.currentPathData, settings);
-            
-            // Update the preview (this will apply the color from the previewRenderer.frontColor)
-            previewRenderer.updateModel(window.currentModel);
-            
-            // Hide loading indicator
+            previewRenderer.updateModel(window.currentModel); // This updates the model in the 2D/3D preview
             document.getElementById('loading-indicator').classList.add('hidden');
-            
         } catch (error) {
             console.error('Error updating preview:', error);
             document.getElementById('loading-indicator').classList.add('hidden');
-            document.getElementById('error-message').classList.remove('hidden');
-            
-            setTimeout(() => {
-                document.getElementById('error-message').classList.add('hidden');
-            }, 3000);
+            const errorMsgEl = document.getElementById('error-message');
+            if (errorMsgEl) {
+                errorMsgEl.classList.remove('hidden');
+                setTimeout(() => {
+                    errorMsgEl.classList.add('hidden');
+                }, 3000);
+            }
         }
     }
     
-    /**
-     * Update model colors without regenerating the geometry
-     */
     function updateModelColors() {
         const colorSettings = {
             frontColor: frontColorInput.value,
-            // We're ignoring the side color since all sides are black
             sideColor: '#000000' 
         };
-        
         previewRenderer.updateModelColors(colorSettings);
     }
     
-    /**
-     * Get current 3D settings from the UI
-     * @returns {Object} - 3D settings object
-     */
     function get3DSettings() {
+        // Ensure outlineColor and outlineThickness are defined if used by modelGenerator
+        // These were virtual in a previous version of app.js
+        const outlineColor = '#000000'; // Example default
+        const outlineThickness = 0; // Example default, or get from UI if re-added
         return {
             extrusionDepth: parseFloat(extrusionDepthInput.value),
             dynamicDepth: dynamicDepthInput.checked,
@@ -226,318 +195,291 @@ document.addEventListener('DOMContentLoaded', () => {
             bevelSize: 0.5,
             bevelSegments: 3,
             frontColor: frontColorInput.value,
-            sideColor: '#000000', // Always black sides
-            outlineColor: outlineColor,
+            sideColor: '#000000',
+            outlineColor: outlineColor, 
             outlineThickness: outlineThickness,
             letterSpacing: parseFloat(letterSpacingInput.value)
         };
     }
     
-    // Initial preview generation
     setTimeout(() => {
         updatePreview();
-    }, 1000); // Wait for fonts to load
+    }, 1000);
 });
 
-/**
- * Prepare model for AR display
- * Scale and position the model for AR placement
- */
+
+// --- AR Core Functions ---
+
 function prepareModelForAR() {
     if (!window.currentModel) {
         console.error("No current model to prepare for AR.");
-        document.getElementById('info-message').textContent = "Please generate a design first.";
-        document.getElementById('info-message').style.display = 'block';
+        if(arInfoMessage) {
+            arInfoMessage.textContent = "Please generate a design first.";
+            arInfoMessage.style.display = 'block';
+        }
         return false;
     }
+    console.log("Preparing model for AR. Original model:", window.currentModel);
+    modelToPlaceAR = window.currentModel.clone();
 
-    modelToPlaceAR = window.currentModel.clone(); // Clone to avoid affecting the main preview
-
-    // --- Center and Scale the model for AR ---
     const box = new THREE.Box3().setFromObject(modelToPlaceAR);
     const center = new THREE.Vector3();
     box.getCenter(center);
-    modelToPlaceAR.position.sub(center); // Center the model at its origin
+    modelToPlaceAR.position.sub(center);
 
     const size = new THREE.Vector3();
     box.getSize(size);
-
     const maxDim = Math.max(size.x, size.y, size.z);
-    const desiredSize = 0.3; // Target size in meters (e.g., 30cm)
+    const desiredSize = 0.3; // 30cm
 
     if (maxDim > 0) {
         const scale = desiredSize / maxDim;
         modelToPlaceAR.scale.set(scale, scale, scale);
-    } else { // Handle case where model has no size (e.g. empty)
-        modelToPlaceAR.scale.set(1,1,1); // Default scale
+    } else {
+        modelToPlaceAR.scale.set(1, 1, 1);
     }
-
     console.log("Model prepared for AR:", modelToPlaceAR);
     return true;
 }
 
-/**
- * Start AR session
- */
 async function startAR() {
     console.log("AR Button clicked - starting AR experience");
-    
     if (!currentPreviewRenderer || !currentPreviewRenderer.renderer) {
-        console.error("PreviewRenderer not ready.");
+        console.error("PreviewRenderer not ready for AR.");
+        return;
+    }
+    if (!currentPreviewRenderer.renderer.xr.enabled) {
+        console.warn("WebXR not enabled on renderer. Enabling now."); // Should have been enabled at init
+        currentPreviewRenderer.renderer.xr.enabled = true;
+    }
+
+    if (!prepareModelForAR()) {
         return;
     }
 
-    if (!prepareModelForAR()) { // Prepare the model first
-        return; // Stop if model preparation failed
-    }
-
     if (navigator.xr) {
+        console.log("navigator.xr exists. AR potentially supported.");
         try {
-            // Check if AR is supported before trying to start it
-            const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
-            console.log("AR supported on this device:", isSupported);
-            
-            if (!isSupported) {
-                throw new Error("AR not supported on this device");
+            const sessionSupported = await navigator.xr.isSessionSupported('immersive-ar');
+            if (!sessionSupported) {
+                console.warn("immersive-ar session is not supported by this device/browser.");
+                if(arInfoMessage) {
+                    arInfoMessage.textContent = "AR is not supported on this device/browser.";
+                    arInfoMessage.style.display = 'block';
+                    setTimeout(() => { arInfoMessage.style.display = 'none'; }, 5000);
+                }
+                return;
             }
-            
-            // Use minimal required features first to increase compatibility
-            const sessionInit = {
-                requiredFeatures: ['dom-overlay'],
-                optionalFeatures: ['hit-test'], // Make hit-test optional
-                domOverlay: { root: document.getElementById('ar-container-wrapper') }
+            console.log("immersive-ar session IS supported.");
+
+            const sessionOptions = {
+                requiredFeatures: ['hit-test', 'dom-overlay'],
+                optionalFeatures: ['local-floor', 'viewer', 'bounded-floor'], // Added bounded-floor
+                domOverlay: { root: document.getElementById('ar-container-wrapper') } // Corrected root
             };
-            
-            console.log("Requesting AR session with options:", sessionInit);
-            const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
-            console.log("AR Session created successfully");
-            
-            // Now handle the session
+            console.log("Requesting AR session with options:", sessionOptions);
+            const session = await navigator.xr.requestSession('immersive-ar', sessionOptions);
+            console.log("AR Session created successfully:", session);
             onSessionStartedAR(session);
         } catch (e) {
             console.error("Failed to start AR session:", e);
-            document.getElementById('info-message').textContent = "Failed to start AR: " + e.message;
-            document.getElementById('info-message').style.display = 'block';
-            setTimeout(() => { document.getElementById('info-message').style.display = 'none'; }, 5000);
+            if(arInfoMessage) {
+                arInfoMessage.textContent = "Failed to start AR: " + e.message;
+                arInfoMessage.style.display = 'block';
+                setTimeout(() => { arInfoMessage.style.display = 'none'; }, 7000);
+            }
         }
     } else {
-        console.warn("WebXR not supported.");
-        document.getElementById('info-message').textContent = "WebXR not supported on this browser/device.";
-        document.getElementById('info-message').style.display = 'block';
-        setTimeout(() => { document.getElementById('info-message').style.display = 'none'; }, 5000);
+        console.warn("navigator.xr does not exist. WebXR not supported.");
+        if(arInfoMessage) {
+            arInfoMessage.textContent = "WebXR API not found in this browser.";
+            arInfoMessage.style.display = 'block';
+            setTimeout(() => { arInfoMessage.style.display = 'none'; }, 5000);
+        }
     }
 }
 
-/**
- * Handle AR session start
- * @param {XRSession} newSession - The new AR session
- */
-function onSessionStartedAR(newSession) {
-    arSession = newSession;
+function onSessionStartedAR(session) {
+    arSession = session;
     arSession.addEventListener('end', onSessionEndedAR);
 
-    currentPreviewRenderer.renderer.xr.setSession(arSession);
+    currentPreviewRenderer.renderer.xr.setSession(arSession)
+        .then(() => {
+            console.log("Successfully set XR session on renderer's WebXRManager.");
 
-    // UI Updates
-    document.getElementById('ar-container-wrapper').style.display = 'block'; // Show AR container
-    document.querySelector('.container').style.display = 'none'; // Hide main app
-    document.getElementById('ar-exit-button').style.display = 'block';
-    document.getElementById('info-message').textContent = "Move phone to find a surface. Tap to place.";
-    document.getElementById('info-message').style.display = 'block';
+            let referenceSpaceSet = false;
+            try {
+                currentPreviewRenderer.renderer.xr.setReferenceSpaceType('local-floor');
+                console.log("WebXRManager successfully set reference space type to 'local-floor'");
+                referenceSpaceSet = true;
+            } catch (e) {
+                console.warn("Failed to set reference space type to 'local-floor', trying 'local':", e);
+                try {
+                    currentPreviewRenderer.renderer.xr.setReferenceSpaceType('local');
+                    console.log("WebXRManager successfully set reference space type to 'local'");
+                    referenceSpaceSet = true;
+                } catch (e2) {
+                    console.warn("Failed to set reference space type to 'local', trying 'viewer':", e2);
+                    try {
+                        currentPreviewRenderer.renderer.xr.setReferenceSpaceType('viewer');
+                        console.log("WebXRManager successfully set reference space type to 'viewer'");
+                        referenceSpaceSet = true;
+                    } catch (e3) {
+                        console.error("Failed to set any default reference space type for WebXRManager:", e3);
+                        if(arInfoMessage) {
+                            arInfoMessage.textContent = "AR Error: Device doesn't support required spatial tracking features.";
+                            arInfoMessage.style.display = 'block';
+                        }
+                        if (arSession) arSession.end().catch(err => console.error("Error ending session after ref space fail:", err));
+                        return; 
+                    }
+                }
+            }
 
-    currentPreviewRenderer.pauseAnimation(); // Pause the 2D preview animation
+            if (!referenceSpaceSet) {
+                console.error("No reference space could be set. AR will likely not function correctly.");
+                // Potentially end session or show error.
+            }
 
-    // Reticle Setup (3D Ring)
-    if (!arReticle) {
-        arReticle = new THREE.Mesh(
-            new THREE.RingGeometry(0.05, 0.07, 32).rotateX(-Math.PI / 2),
-            new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.7, transparent: true })
-        );
-        arReticle.matrixAutoUpdate = false;
-        arReticle.visible = false;
-        currentPreviewRenderer.scene.add(arReticle); // Add to the main scene
-    } else { // Ensure reticle is visible if re-entering AR
-         arReticle.visible = false; // Start hidden until hit-test
-    }
+            // UI Updates
+            const arContainerWrapper = document.getElementById('ar-container-wrapper');
+            if(arContainerWrapper) arContainerWrapper.style.display = 'block';
+            const mainAppContainer = document.querySelector('.container');
+            if(mainAppContainer) mainAppContainer.style.display = 'none';
+            if(arExitButton) arExitButton.style.display = 'block';
+            if(arInfoMessage) {
+                arInfoMessage.textContent = "Move phone to find a surface. Tap to place.";
+                arInfoMessage.style.display = 'block';
+            }
 
-    // Controller for Tap Input
-    if (arController) { // Clean up previous if any (shouldn't happen if session end is clean)
-        arController.removeEventListener('select', onSelectAR);
-        currentPreviewRenderer.scene.remove(arController);
-    }
-    arController = currentPreviewRenderer.renderer.xr.getController(0);
-    arController.addEventListener('select', onSelectAR);
-    currentPreviewRenderer.scene.add(arController);
+            if (currentPreviewRenderer && typeof currentPreviewRenderer.hideCustomBackground === 'function') {
+                currentPreviewRenderer.hideCustomBackground();
+            }
 
-    hitTestSourceRequested = false; // Reset for new session
-    hitTestSource = null;
+            currentPreviewRenderer.pauseAnimation();
 
-    // Start the AR render loop (using the existing renderer and scene)
-    currentPreviewRenderer.renderer.setAnimationLoop(renderXRSession);
-    console.log("AR Session Started");
+            if (!arReticle) {
+                arReticle = new THREE.Mesh(
+                    new THREE.RingGeometry(0.05, 0.07, 32).rotateX(-Math.PI / 2),
+                    new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.7, transparent: true })
+                );
+                arReticle.matrixAutoUpdate = false;
+                currentPreviewRenderer.scene.add(arReticle);
+            }
+            arReticle.visible = false; 
+            
+            if (arController && arController.parent) {
+                arController.parent.remove(arController); 
+                arController.removeEventListener('select', onSelectAR);
+            }
+            arController = currentPreviewRenderer.renderer.xr.getController(0);
+            arController.addEventListener('select', onSelectAR);
+            currentPreviewRenderer.scene.add(arController);
+
+            hitTestSourceRequested = false;
+            hitTestSource = null;
+
+            currentPreviewRenderer.renderer.setAnimationLoop(renderXRSession);
+            console.log("AR Session Started and configured");
+
+        })
+        .catch(err => { 
+            console.error("Error from renderer.xr.setSession() or subsequent setup:", err);
+            if(arInfoMessage) {
+                arInfoMessage.textContent = "AR initialization failed: " + err.message;
+                arInfoMessage.style.display = 'block';
+            }
+            if (arSession) {
+                if (arSession.visibilityState === 'visible' && !arSession.ended) { // Check if session is active
+                     arSession.end().catch(e => console.error("Error ending session after setSession fail:", e));
+                } else if (arSession.ended === false) { // Handle cases where it might be 'ending' but not fully 'ended'
+                    console.log("Session was not 'visible' but also not 'ended', attempting to end.");
+                    arSession.end().catch(e => console.error("Error ending non-visible session:", e));
+                }
+            }
+        });
 }
 
-/**
- * Handle tap to place in AR
- */
 function onSelectAR() {
     if (arReticle && arReticle.visible && modelToPlaceAR) {
-        const newSignAR = modelToPlaceAR.clone(); // Clone the prepared model
+        const newSignAR = modelToPlaceAR.clone();
         newSignAR.position.setFromMatrixPosition(arReticle.matrix);
-        // Optional: Apply a slight rotation if needed, e.g., to face the camera
-        // newSignAR.quaternion.copy(currentPreviewRenderer.camera.quaternion); // Simplistic face camera
-        // newSignAR.rotation.y = ... // or set a specific rotation
         newSignAR.visible = true;
-        newSignAR.userData.isARPlacedObject = true; // Mark for cleanup
+        newSignAR.userData.isARPlacedObject = true;
         currentPreviewRenderer.scene.add(newSignAR);
         console.log("AR Sign placed at:", newSignAR.position);
     }
 }
 
-/**
- * AR render loop
- * @param {DOMHighResTimeStamp} timestamp - The time when FUN was called
- * @param {XRFrame} frame - The current XR frame
- */
 function renderXRSession(timestamp, frame) {
-    if (!frame || !arSession) return;
-
+    if (!frame || !arSession || !currentPreviewRenderer || !currentPreviewRenderer.renderer.xr.isPresenting) {
+        return;
+    }
+    
     const referenceSpace = currentPreviewRenderer.renderer.xr.getReferenceSpace();
-
     if (!referenceSpace) {
-        console.warn("AR Reference space not yet available.");
         return;
     }
 
-    // Log on first few frames to help debug
-    if (frame && window.arFrameCount === undefined) {
-        window.arFrameCount = 0;
-        console.log("First AR frame received");
-    }
-    
-    if (window.arFrameCount !== undefined && window.arFrameCount < 10) {
-        window.arFrameCount++;
-        if (window.arFrameCount === 1 || window.arFrameCount === 5) {
-            console.log(`AR Frame ${window.arFrameCount}`, {
-                frame: frame,
-                timestamp: timestamp,
-                referenceSpace: referenceSpace
-            });
-        }
-    }
-    
-    // Try to get viewer pose
-    const pose = frame.getViewerPose(referenceSpace);
-    if (pose && window.viewerPoseLogged !== true) {
-        console.log("Got viewer pose:", pose);
-        window.viewerPoseLogged = true;
-    }
-
-    // Hit Testing - with more robust error handling
     if (!hitTestSourceRequested) {
-        try {
-            console.log("Requesting hit test source");
-            arSession.requestReferenceSpace('viewer')
-                .then((viewerSpace) => {
-                    // Ensure viewerSpace is not null before requesting hit test source
-                    if (viewerSpace) {
-                        console.log("Got viewer space, requesting hit test source");
-                        return arSession.requestHitTestSource({ space: viewerSpace });
-                    } else {
-                        console.error("Viewer reference space is null.");
-                        return null;
-                    }
-                })
+        arSession.requestReferenceSpace('viewer').then((viewerSpace) => {
+            if (viewerSpace) {
+                arSession.requestHitTestSource({ space: viewerSpace })
                 .then((source) => {
-                    if (source) {
-                        hitTestSource = source;
-                        console.log("Hit test source obtained successfully");
-                    } else {
-                        console.log("Could not get hit test source");
-                    }
-                    hitTestSourceRequested = true; // Mark as requested either way
+                    hitTestSource = source;
+                    console.log("Hit test source obtained.");
                 })
                 .catch(err => {
-                    console.error("Error setting up hit test:", err);
-                    hitTestSourceRequested = true; // Mark as requested to avoid infinite retries
-                    
-                    // Show message to user that hit testing isn't available
-                    document.getElementById('info-message').textContent = 
-                        "Surface detection not available. Tap anywhere to place.";
-                    document.getElementById('info-message').style.display = 'block';
-                    
-                    // Enable tap-to-place without hit testing
-                    window.arPlaceWithoutHitTest = true;
+                    console.error("Could not get hit test source:", err);
+                    hitTestSourceRequested = false; 
                 });
-        } catch (err) {
-            console.error("Exception requesting hit test:", err);
-            hitTestSourceRequested = true;
-            window.arPlaceWithoutHitTest = true;
-        }
+            } else {
+                console.error("Viewer reference space is null for hit-test source request.");
+                hitTestSourceRequested = false;
+            }
+        }).catch(err => {
+            console.error("Could not get viewer reference space for hit test:", err);
+            hitTestSourceRequested = false;
+        });
+        hitTestSourceRequested = true; 
     }
 
-    // Process hit test results
     if (hitTestSource && arReticle) {
-        try {
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            if (hitTestResults.length > 0) {
-                const hit = hitTestResults[0];
-                const hitPose = hit.getPose(referenceSpace);
-
-                if (hitPose) {
-                    arReticle.visible = true;
-                    arReticle.matrix.fromArray(hitPose.transform.matrix);
-                    
-                    // Log on first hit
-                    if (!window.firstHitLogged) {
-                        console.log("First hit test success:", hitPose);
-                        window.firstHitLogged = true;
-                    }
-                } else {
-                    arReticle.visible = false;
-                }
+        const hitTestResults = frame.getHitTestResults(hitTestSource);
+        if (hitTestResults.length > 0) {
+            const hit = hitTestResults[0];
+            const hitPose = hit.getPose(referenceSpace); 
+            if (hitPose) {
+                arReticle.visible = true;
+                arReticle.matrix.fromArray(hitPose.transform.matrix);
             } else {
                 arReticle.visible = false;
             }
-        } catch (err) {
-            console.error("Error during hit test processing:", err);
+        } else {
             arReticle.visible = false;
         }
     }
 }
 
-/**
- * End the AR session
- */
 function endARSession() {
     if (arSession) {
-        arSession.end().catch(e => console.error("Error ending AR session:", e));
-        // onSessionEndedAR will handle the rest via the 'end' event
+        arSession.end().catch(e => console.error("Error during arSession.end():", e));
     }
 }
 
-/**
- * Handle AR session end
- */
 function onSessionEndedAR() {
+    console.log("onSessionEndedAR called");
     if (arController) {
         arController.removeEventListener('select', onSelectAR);
-        // Check if arController is still a child of the scene before removing
-        if (arController.parent === currentPreviewRenderer.scene) {
-            currentPreviewRenderer.scene.remove(arController);
+        if (arController.parent) { 
+            arController.parent.remove(arController);
         }
         arController = null;
     }
     if (arReticle) {
         arReticle.visible = false;
-        // Optionally remove from scene if you re-create it each time:
-        // if (arReticle.parent === currentPreviewRenderer.scene) {
-        //     currentPreviewRenderer.scene.remove(arReticle);
-        // }
-        // arReticle = null; // Keep the reticle object for reuse
     }
 
-    // Remove placed AR objects
     const objectsToRemove = [];
     currentPreviewRenderer.scene.traverse(child => {
         if (child.userData.isARPlacedObject) {
@@ -545,15 +487,14 @@ function onSessionEndedAR() {
         }
     });
     objectsToRemove.forEach(obj => {
-        if (obj.parent === currentPreviewRenderer.scene) {
-            currentPreviewRenderer.scene.remove(obj);
+        if (obj.parent) {
+            obj.parent.remove(obj);
         }
-        // Dispose of geometry and material if necessary to free memory
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
             if (Array.isArray(obj.material)) {
                 obj.material.forEach(mat => mat.dispose());
-            } else {
+            } else if (obj.material.dispose) { // Check if material has dispose method
                 obj.material.dispose();
             }
         }
@@ -562,21 +503,29 @@ function onSessionEndedAR() {
     hitTestSourceRequested = false;
     hitTestSource = null;
 
-    // Important: Clear the XR session from the renderer
-    if (currentPreviewRenderer && currentPreviewRenderer.renderer.xr.getSession()) {
-         currentPreviewRenderer.renderer.xr.setSession(null).catch(e => console.error("Error setting XR session to null:", e));
+    if (currentPreviewRenderer && currentPreviewRenderer.renderer.xr.isPresenting) {
+         // It's good practice to await this promise or handle its potential rejection
+        currentPreviewRenderer.renderer.xr.setSession(null)
+            .then(() => console.log("XR session set to null on renderer."))
+            .catch(e => console.error("Error setting XR session to null on end:", e));
     }
+   
+    currentPreviewRenderer.renderer.setAnimationLoop(null);
 
-    currentPreviewRenderer.renderer.setAnimationLoop(null); // Stop the AR render loop
+    const arContainerWrapper = document.getElementById('ar-container-wrapper');
+    if(arContainerWrapper) arContainerWrapper.style.display = 'none';
+    const mainAppContainer = document.querySelector('.container');
+    if(mainAppContainer) mainAppContainer.style.display = 'block';
+    const arExitButton = document.getElementById('ar-exit-button');
+    if(arExitButton) arExitButton.style.display = 'none';
+    const arInfoMessage = document.getElementById('info-message');
+    if(arInfoMessage) arInfoMessage.style.display = 'none';
 
-    // UI Updates
-    document.getElementById('ar-container-wrapper').style.display = 'none';
-    document.querySelector('.container').style.display = 'block'; // Show main app
-    document.getElementById('ar-exit-button').style.display = 'none';
-    document.getElementById('info-message').style.display = 'none';
-
-    currentPreviewRenderer.resumeAnimation(); // Resume the 2D preview animation
-
-    arSession = null; // Clear the session variable
-    console.log("AR Session Ended");
+    if (currentPreviewRenderer && typeof currentPreviewRenderer.showCustomBackground === 'function') {
+        currentPreviewRenderer.showCustomBackground();
+    }
+    currentPreviewRenderer.resumeAnimation();
+    
+    arSession = null; 
+    console.log("AR Session Ended and cleaned up.");
 }
