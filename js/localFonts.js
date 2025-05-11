@@ -723,4 +723,10 @@ const LocalFontsCollection = {
             font.family === family || font.displayName === family
         ) || null;
     }
-}; 
+};
+
+// Make it available globally for backward compatibility
+window.LocalFontsCollection = LocalFontsCollection;
+
+// Export for ES modules
+export default LocalFontsCollection; 

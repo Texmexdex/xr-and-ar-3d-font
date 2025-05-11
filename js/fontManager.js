@@ -1,4 +1,5 @@
-import * as opentype from 'opentype.js';
+import FontPicker from './fontPicker.js';
+import LocalFontsCollection from './localFonts.js';
 
 /**
  * Font Manager

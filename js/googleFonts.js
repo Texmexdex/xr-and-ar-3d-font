@@ -1,3 +1,6 @@
+// Import LocalFontsCollection if needed
+import LocalFontsCollection from './localFonts.js';
+
 /**
  * Google Fonts Integration
  * Fetches and manages Google Fonts for use in the 3D Sign Creator
@@ -199,4 +202,7 @@ class GoogleFontsManager {
             return 'fonts/Roboto-Regular.ttf';
         }
     }
-} 
+}
+
+// Export the class as default
+export default GoogleFontsManager; 

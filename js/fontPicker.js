@@ -1,3 +1,5 @@
+import GoogleFontsManager from './googleFonts.js';
+
 /**
  * Font Picker Component
  * Provides a UI for selecting from Google Fonts and local fonts
@@ -482,4 +484,7 @@ class FontPicker {
             this.closeModal();
         }
     }
-} 
+}
+
+// Export the class as default
+export default FontPicker; 
